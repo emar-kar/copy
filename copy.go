@@ -19,6 +19,22 @@ func Copy(ctx context.Context, src, dst string, opt ...optFunc) error {
 		fn(opts)
 	}
 
+	if err := copy(ctx, src, dst, opts); err != nil {
+		if opts.skip {
+			if opts.log {
+				log.Println(err)
+			}
+
+			return nil
+		}
+
+		return err
+	}
+
+	return nil
+}
+
+func copy(ctx context.Context, src, dst string, opts *options) error {
 	src, err := resolvePath(src)
 	if err != nil {
 		return err
@@ -34,7 +50,9 @@ func Copy(ctx context.Context, src, dst string, opt ...optFunc) error {
 			dst = path.Join(dst, path.Base(src))
 		}
 
-		return copyFolder(ctx, src, dst, opts)
+		if err := copyFolder(ctx, src, dst, opts); err != nil {
+			return err
+		}
 	}
 
 	if _, f := path.Split(src); f != path.Base(dst) {
@@ -46,7 +64,9 @@ func Copy(ctx context.Context, src, dst string, opt ...optFunc) error {
 	}
 
 	if _, err := os.Stat(dst); !os.IsNotExist(err) || opts.force {
-		return copyFile(ctx, src, dst, opts)
+		if err := copyFile(ctx, src, dst, opts); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -62,21 +82,13 @@ func copyFolder(ctx context.Context, src, dst string, opts *options) error {
 				return ctx.Err()
 			default:
 				if err != nil {
-					if opts.skip {
-						if opts.log {
-							log.Println(err)
-						}
-
-						return nil
-					}
-
 					return err
 				}
 
 				subDst := strings.ReplaceAll(root, src, dst)
 				if info.IsDir() {
 					if err := os.MkdirAll(subDst, info.Mode()); err != nil {
-						return fmt.Errorf("cannot create sub-folder: %w", err)
+						return err
 					}
 
 					return nil
@@ -84,14 +96,6 @@ func copyFolder(ctx context.Context, src, dst string, opts *options) error {
 
 				if _, err := os.Stat(subDst); !os.IsNotExist(err) || opts.force {
 					if err := copyFile(ctx, root, subDst, opts); err != nil {
-						if opts.skip {
-							if opts.log {
-								log.Println(err)
-							}
-
-							return nil
-						}
-
 						return err
 					}
 				}

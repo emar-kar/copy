@@ -19,11 +19,10 @@ func ContentOnly(o *options) { o.contentOnly = true }
 
 // WithErrorsSkip skips errors during find execution.
 //
-// Note: if the flag was set, [Copy] will return nil error,
-// only if the base path was resolved and exists and if it was
-// possible to create destination file or folder.
+// Note: this flag silence all possible copy errors. It
+// does not check if file/folder was actually copied.
 func WithErrorsSkip(o *options) { o.skip = true }
 
-// WithErrosLog logs errors during find execution,
+// WithErrorsLog logs errors during find execution,
 // should be used with [WithErrorsSkip], for clear output.
-func WithErrosLog(o *options) { o.log = true }
+func WithErrorsLog(o *options) { o.log = true }
