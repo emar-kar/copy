@@ -53,8 +53,8 @@ func copy(ctx context.Context, src, dst string, opts *options) error {
 		return copyFolder(ctx, src, dst, opts)
 	}
 
-	if _, f := path.Split(src); f != path.Base(dst) {
-		info, err := os.Stat(path.Base(src))
+	if dir, f := path.Split(src); f != path.Base(dst) {
+		info, err := os.Stat(dir)
 		if err != nil {
 			return err
 		}
