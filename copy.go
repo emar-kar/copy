@@ -54,7 +54,12 @@ func copy(ctx context.Context, src, dst string, opts *options) error {
 	}
 
 	if _, f := path.Split(src); f != path.Base(dst) {
-		if err := os.MkdirAll(dst, srcInfo.Mode()); err != nil {
+		info, err := os.Stat(path.Base(src))
+		if err != nil {
+			return err
+		}
+
+		if err := os.MkdirAll(dst, info.Mode()); err != nil {
 			return err
 		}
 
