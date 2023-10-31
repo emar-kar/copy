@@ -50,9 +50,7 @@ func copy(ctx context.Context, src, dst string, opts *options) error {
 			dst = path.Join(dst, path.Base(src))
 		}
 
-		if err := copyFolder(ctx, src, dst, opts); err != nil {
-			return err
-		}
+		return copyFolder(ctx, src, dst, opts)
 	}
 
 	if _, f := path.Split(src); f != path.Base(dst) {
@@ -64,9 +62,7 @@ func copy(ctx context.Context, src, dst string, opts *options) error {
 	}
 
 	if _, err := os.Stat(dst); !os.IsNotExist(err) || opts.force {
-		if err := copyFile(ctx, src, dst, opts); err != nil {
-			return err
-		}
+		return copyFile(ctx, src, dst, opts)
 	}
 
 	return nil
@@ -90,14 +86,10 @@ func copyFolder(ctx context.Context, src, dst string, opts *options) error {
 					if err := os.MkdirAll(subDst, info.Mode()); err != nil {
 						return err
 					}
-
-					return nil
 				}
 
 				if _, err := os.Stat(subDst); !os.IsNotExist(err) || opts.force {
-					if err := copyFile(ctx, root, subDst, opts); err != nil {
-						return err
-					}
+					return copyFile(ctx, root, subDst, opts)
 				}
 
 				return nil
