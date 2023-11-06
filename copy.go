@@ -93,7 +93,7 @@ func copyFolder(ctx context.Context, src, dst string, opts *options) error {
 					}
 				}
 
-				if _, err := os.Stat(subDst); !os.IsNotExist(err) || opts.force {
+				if _, err := os.Stat(subDst); os.IsNotExist(err) || opts.force {
 					return copyFile(ctx, root, subDst, opts)
 				}
 
