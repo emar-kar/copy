@@ -5,35 +5,37 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
 )
 
-// options allows to configure Copy behavior.
-type options struct {
-	force       bool
-	contentOnly bool
-}
-
-type optFunc func(*options)
-
-// Force re-write destination if it is already exists.
-func Force(o *options) { o.force = true }
-
-// ContentOnly if copy folder and set this flag to true,
-// will copy only source content without creating root folder.
-func ContentOnly(o *options) { o.contentOnly = true }
-
 // Copy copies src to dst with given options.
-func Copy(ctx context.Context, src, dst string, opts ...optFunc) error {
-	opt := &options{}
-	for _, fn := range opts {
-		fn(opt)
+func Copy(ctx context.Context, src, dst string, opt ...optFunc) error {
+	opts := &options{}
+	for _, fn := range opt {
+		fn(opts)
 	}
 
-	src, err := evalSymlink(src)
+	if err := copy(ctx, src, dst, opts); err != nil {
+		if opts.skip {
+			if opts.log {
+				log.Println(err)
+			}
+
+			return nil
+		}
+
+		return err
+	}
+
+	return nil
+}
+
+func copy(ctx context.Context, src, dst string, opts *options) error {
+	src, err := resolvePath(src)
 	if err != nil {
 		return err
 	}
@@ -44,30 +46,35 @@ func Copy(ctx context.Context, src, dst string, opts ...optFunc) error {
 	}
 
 	if srcInfo.IsDir() {
-		if !opt.contentOnly {
+		if !opts.contentOnly {
 			dst = path.Join(dst, path.Base(src))
 		}
 
-		return copyFolder(ctx, src, dst, opt.force)
+		return copyFolder(ctx, src, dst, opts)
 	}
 
-	if _, f := path.Split(src); f != path.Base(dst) {
-		if err := os.MkdirAll(dst, srcInfo.Mode()); err != nil {
+	if dir, f := path.Split(src); f != path.Base(dst) {
+		info, err := os.Stat(dir)
+		if err != nil {
+			return err
+		}
+
+		if err := os.MkdirAll(dst, info.Mode()); err != nil {
 			return err
 		}
 
 		dst = path.Join(dst, f)
 	}
 
-	if _, err := os.Stat(dst); !os.IsNotExist(err) || opt.force {
-		return copyFile(ctx, src, dst)
+	if _, err := os.Stat(dst); os.IsNotExist(err) || opts.force {
+		return copyFile(ctx, src, dst, opts)
 	}
 
 	return nil
 }
 
 // copyFolder is a support function to copy whole folder.
-func copyFolder(ctx context.Context, src, dst string, force bool) error {
+func copyFolder(ctx context.Context, src, dst string, opts *options) error {
 	return filepath.Walk(
 		src, func(root string, info fs.FileInfo, err error,
 		) error {
@@ -82,14 +89,12 @@ func copyFolder(ctx context.Context, src, dst string, force bool) error {
 				subDst := strings.ReplaceAll(root, src, dst)
 				if info.IsDir() {
 					if err := os.MkdirAll(subDst, info.Mode()); err != nil {
-						return fmt.Errorf("cannot create sub-folder: %w", err)
+						return err
 					}
-
-					return nil
-				}
-
-				if _, err := os.Stat(subDst); !os.IsNotExist(err) || force {
-					return copyFile(ctx, root, subDst)
+				} else {
+					if _, err := os.Stat(subDst); os.IsNotExist(err) || opts.force {
+						return copyFile(ctx, root, subDst, opts)
+					}
 				}
 
 				return nil
@@ -99,7 +104,7 @@ func copyFolder(ctx context.Context, src, dst string, force bool) error {
 
 // copyFile is a support function to copy file content. Copies with buffer.
 // If context canceled during the copy, dst file will be removed before return.
-func copyFile(ctx context.Context, src, dst string) error {
+func copyFile(ctx context.Context, src, dst string, opts *options) error {
 	srcF, err := os.Open(src)
 	if err != nil {
 		return err
@@ -150,17 +155,18 @@ func copyFile(ctx context.Context, src, dst string) error {
 	}
 }
 
-// evalSymlink returns the path name after the evaluation of any symbolic links.
-// Check [filepath.EvalSymlinks] for details.
-func evalSymlink(p string) (string, error) {
+// resolvePath resolves symlinks and relative paths.
+func resolvePath(p string) (string, error) {
 	info, err := os.Lstat(p)
 	if err != nil {
-		return "", fmt.Errorf("cannot get %s info: %w", p, err)
+		return "", err
 	}
 
 	if info.Mode()&os.ModeSymlink == os.ModeSymlink {
-		return filepath.EvalSymlinks(p)
+		if p, err = filepath.EvalSymlinks(p); err != nil {
+			return "", err
+		}
 	}
 
-	return p, nil
+	return filepath.Abs(p)
 }
