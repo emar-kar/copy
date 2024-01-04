@@ -2,10 +2,8 @@ package copy
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"io/fs"
-	"log"
 	"os"
 	"path"
 	"path/filepath"
@@ -13,22 +11,18 @@ import (
 )
 
 // Copy copies src to dst with given options.
-func Copy(ctx context.Context, src, dst string, opt ...optFunc) error {
-	opts := &options{}
-	for _, fn := range opt {
-		fn(opts)
+func Copy(ctx context.Context, src, dst string, opts ...optFunc) error {
+	opt := &options{}
+	for _, fn := range opts {
+		fn(opt)
 	}
 
-	if err := copy(ctx, src, dst, opts); err != nil {
-		if opts.skip {
-			if opts.log {
-				log.Println(err)
-			}
-
-			return nil
-		}
-
+	if err := copy(ctx, src, dst, opt); err != nil {
 		return err
+	}
+
+	if opt.move {
+		return os.RemoveAll(src)
 	}
 
 	return nil
@@ -42,7 +36,7 @@ func copy(ctx context.Context, src, dst string, opts *options) error {
 
 	srcInfo, err := os.Stat(src)
 	if err != nil {
-		return fmt.Errorf("cannot get source information: %w", err)
+		return err
 	}
 
 	if srcInfo.IsDir() {
@@ -129,28 +123,17 @@ func copyFile(ctx context.Context, src, dst string, opts *options) error {
 	buf := make([]byte, 4096)
 
 	for {
-		select {
-		case <-ctx.Done():
-			if err := os.RemoveAll(dst); err != nil {
-				return fmt.Errorf(
-					"%w: cannot remove dst file: %w", ctx.Err(), err,
-				)
-			}
+		b, err := srcF.Read(buf)
+		if err != nil && err != io.EOF {
+			return err
+		}
 
-			return ctx.Err()
-		default:
-			b, err := srcF.Read(buf)
-			if err != nil && err != io.EOF {
-				return err
-			}
+		if b == 0 {
+			return nil
+		}
 
-			if b == 0 {
-				return nil
-			}
-
-			if _, err := dstF.Write(buf[:b]); err != nil {
-				return err
-			}
+		if _, err := dstF.Write(buf[:b]); err != nil {
+			return err
 		}
 	}
 }
