@@ -12,23 +12,39 @@ import (
 
 // Copy copies src to dst with given options.
 func Copy(ctx context.Context, src, dst string, opts ...optFunc) error {
-	opt := &options{}
+	opt := defaultOptions()
 	for _, fn := range opts {
 		fn(opt)
 	}
 
-	if err := copy(ctx, src, dst, opt); err != nil {
-		return err
-	}
-
 	if opt.move {
-		return os.RemoveAll(src)
+		info, err := os.Stat(src)
+		if err != nil {
+			return err
+		}
+
+		if !info.IsDir() {
+			srcDir, _ := path.Split(src)
+			info, err = os.Stat(srcDir)
+			if err != nil {
+				return err
+			}
+		}
+
+		dstDir, _ := path.Split(dst)
+		if err := os.MkdirAll(dstDir, info.Mode()); err != nil {
+			return err
+		}
+
+		if err := os.Rename(src, dst); err == nil {
+			return os.RemoveAll(src)
+		}
 	}
 
-	return nil
+	return copy(ctx, src, dst, opt)
 }
 
-func copy(ctx context.Context, src, dst string, opts *options) error {
+func copy(ctx context.Context, src, dst string, opt *options) error {
 	src, err := resolvePath(src)
 	if err != nil {
 		return err
@@ -40,11 +56,11 @@ func copy(ctx context.Context, src, dst string, opts *options) error {
 	}
 
 	if srcInfo.IsDir() {
-		if !opts.contentOnly {
+		if !opt.contentOnly {
 			dst = path.Join(dst, path.Base(src))
 		}
 
-		return copyFolder(ctx, src, dst, opts)
+		return copyFolder(ctx, src, dst, opt)
 	}
 
 	if dir, f := path.Split(src); f != path.Base(dst) {
@@ -60,8 +76,12 @@ func copy(ctx context.Context, src, dst string, opts *options) error {
 		dst = path.Join(dst, f)
 	}
 
-	if _, err := os.Stat(dst); os.IsNotExist(err) || opts.force {
-		return copyFile(ctx, src, dst, opts)
+	if _, err := os.Stat(dst); os.IsNotExist(err) || opt.force {
+		return copyFile(ctx, src, dst, opt)
+	}
+
+	if opt.move {
+		return os.RemoveAll(src)
 	}
 
 	return nil
@@ -98,7 +118,7 @@ func copyFolder(ctx context.Context, src, dst string, opts *options) error {
 
 // copyFile is a support function to copy file content. Copies with buffer.
 // If context canceled during the copy, dst file will be removed before return.
-func copyFile(ctx context.Context, src, dst string, opts *options) error {
+func copyFile(ctx context.Context, src, dst string, opt *options) error {
 	srcF, err := os.Open(src)
 	if err != nil {
 		return err
@@ -120,10 +140,13 @@ func copyFile(ctx context.Context, src, dst string, opts *options) error {
 	}
 	defer dstF.Close()
 
-	buf := make([]byte, 4096)
+	buf := make([]byte, opt.bufSize)
+
+	srcReader := NewReadWriterWithContext(ctx, srcF)
+	dstWriter := NewReadWriterWithContext(ctx, dstF)
 
 	for {
-		b, err := srcF.Read(buf)
+		b, err := srcReader.Read(buf)
 		if err != nil && err != io.EOF {
 			return err
 		}
@@ -132,7 +155,7 @@ func copyFile(ctx context.Context, src, dst string, opts *options) error {
 			return nil
 		}
 
-		if _, err := dstF.Write(buf[:b]); err != nil {
+		if _, err := dstWriter.Write(buf[:b]); err != nil {
 			return err
 		}
 	}
@@ -152,4 +175,33 @@ func resolvePath(p string) (string, error) {
 	}
 
 	return filepath.Abs(p)
+}
+
+// ReadWriterWithContext wraps [io.ReadWriter] and adds [context.Context]
+// to its Read and Write methods, so those operations can be canceled.
+type ReadWriterWithContext struct {
+	ctx context.Context
+	rw  io.ReadWriter
+}
+
+func (rw *ReadWriterWithContext) Read(b []byte) (int, error) {
+	if err := rw.ctx.Err(); err != nil {
+		return 0, err
+	}
+
+	return rw.rw.Read(b)
+}
+
+func (rw *ReadWriterWithContext) Write(b []byte) (int, error) {
+	if err := rw.ctx.Err(); err != nil {
+		return 0, err
+	}
+
+	return rw.rw.Write(b)
+}
+
+func NewReadWriterWithContext(
+	ctx context.Context, rw io.ReadWriter,
+) *ReadWriterWithContext {
+	return &ReadWriterWithContext{ctx, rw}
 }
