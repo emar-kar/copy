@@ -1,5 +1,7 @@
 package copy
 
+const defaultBufferSize = 4096
+
 // options allows to configure Copy behavior.
 type options struct {
 	bufSize     int
@@ -9,7 +11,7 @@ type options struct {
 }
 
 func defaultOptions() *options {
-	return &options{bufSize: 4096}
+	return &options{bufSize: defaultBufferSize}
 }
 
 type optFunc func(*options)
@@ -25,8 +27,13 @@ func ContentOnly(o *options) { o.contentOnly = true }
 func WithMove(o *options) { o.move = true }
 
 // WithBufferSize allows to set custom buffer size for file copy.
+// If provided size <= 0, then default will be used.
 func WithBufferSize(size int) optFunc {
 	return func(o *options) {
+		if size <= 0 {
+			return
+		}
+
 		o.bufSize = size
 	}
 }
