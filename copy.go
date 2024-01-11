@@ -2,6 +2,7 @@ package copy
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -10,33 +11,23 @@ import (
 	"strings"
 )
 
-// Copy copies src to dst with given options.
+// Copy copies source file/folder to destination with given options.
 func Copy(ctx context.Context, src, dst string, opts ...optFunc) error {
 	opt := defaultOptions()
 	for _, fn := range opts {
 		fn(opt)
 	}
 
+	src, err := resolvePath(src)
+	if err != nil {
+		return err
+	}
+
+	// Attempt to rename file/folder instead of copying and then removing.
+	// If call to rename was finished with an error, it will be ignored
+	// and standart copy algorithm will be used.
 	if opt.move {
-		info, err := os.Stat(src)
-		if err != nil {
-			return err
-		}
-
-		if !info.IsDir() {
-			srcDir, _ := path.Split(src)
-			info, err = os.Stat(srcDir)
-			if err != nil {
-				return err
-			}
-		}
-
-		dstDir, _ := path.Split(dst)
-		if err := os.MkdirAll(dstDir, info.Mode()); err != nil {
-			return err
-		}
-
-		if err := os.Rename(src, dst); err == nil {
+		if err := rename(src, dst); err == nil {
 			return os.RemoveAll(src)
 		}
 	}
@@ -44,22 +35,33 @@ func Copy(ctx context.Context, src, dst string, opts ...optFunc) error {
 	return copy(ctx, src, dst, opt)
 }
 
-func copy(ctx context.Context, src, dst string, opt *options) error {
-	src, err := resolvePath(src)
+func rename(src, dst string) error {
+	info, err := os.Stat(src)
 	if err != nil {
 		return err
 	}
 
+	if !info.IsDir() {
+		info, err = os.Stat(filepath.Dir(src))
+		if err != nil {
+			return err
+		}
+	}
+
+	if err := os.MkdirAll(filepath.Dir(dst), info.Mode()); err != nil {
+		return err
+	}
+
+	return os.Rename(src, dst)
+}
+
+func copy(ctx context.Context, src, dst string, opt *options) error {
 	srcInfo, err := os.Stat(src)
 	if err != nil {
 		return err
 	}
 
 	if srcInfo.IsDir() {
-		if !opt.contentOnly {
-			dst = path.Join(dst, path.Base(src))
-		}
-
 		return copyFolder(ctx, src, dst, opt)
 	}
 
@@ -77,7 +79,44 @@ func copy(ctx context.Context, src, dst string, opt *options) error {
 	}
 
 	if _, err := os.Stat(dst); os.IsNotExist(err) || opt.force {
-		return copyFile(ctx, src, dst, opt)
+		if err := copyFile(ctx, src, dst, opt); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// copyFolder is a support function to copy folder and its' content.
+func copyFolder(ctx context.Context, src, dst string, opt *options) error {
+	if !opt.contentOnly {
+		dst = path.Join(dst, path.Base(src))
+	}
+
+	if err := filepath.Walk(
+		src, func(root string, info fs.FileInfo, err error,
+		) error {
+			if err != nil {
+				return err
+			}
+
+			subDst := strings.ReplaceAll(root, src, dst)
+			if info.IsDir() {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+					return os.MkdirAll(subDst, info.Mode())
+				}
+			} else {
+				if _, err := os.Stat(subDst); os.IsNotExist(err) || opt.force {
+					return copyFile(ctx, root, subDst, opt)
+				}
+			}
+
+			return nil
+		}); err != nil {
+		return err
 	}
 
 	if opt.move {
@@ -87,37 +126,7 @@ func copy(ctx context.Context, src, dst string, opt *options) error {
 	return nil
 }
 
-// copyFolder is a support function to copy whole folder.
-func copyFolder(ctx context.Context, src, dst string, opts *options) error {
-	return filepath.Walk(
-		src, func(root string, info fs.FileInfo, err error,
-		) error {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-				if err != nil {
-					return err
-				}
-
-				subDst := strings.ReplaceAll(root, src, dst)
-				if info.IsDir() {
-					if err := os.MkdirAll(subDst, info.Mode()); err != nil {
-						return err
-					}
-				} else {
-					if _, err := os.Stat(subDst); os.IsNotExist(err) || opts.force {
-						return copyFile(ctx, root, subDst, opts)
-					}
-				}
-
-				return nil
-			}
-		})
-}
-
-// copyFile is a support function to copy file content. Copies with buffer.
-// If context canceled during the copy, dst file will be removed before return.
+// copyFile is a support function to copy file content.
 func copyFile(ctx context.Context, src, dst string, opt *options) error {
 	srcF, err := os.Open(src)
 	if err != nil {
@@ -140,10 +149,28 @@ func copyFile(ctx context.Context, src, dst string, opt *options) error {
 	}
 	defer dstF.Close()
 
-	buf := make([]byte, opt.bufSize)
+	if cErr := copyBytes(ctx, srcF, dstF, opt.bufSize); cErr != nil && opt.revert {
+		if rErr := os.Remove(dst); rErr != nil {
+			return fmt.Errorf("%w: %s", cErr, rErr)
+		}
 
-	srcReader := NewReadWriterWithContext(ctx, srcF)
-	dstWriter := NewReadWriterWithContext(ctx, dstF)
+		return cErr
+	}
+
+	if opt.move {
+		return os.Remove(src)
+	}
+
+	return nil
+}
+
+// copyBytes is a support function to copy bytes from one [os.File]
+// to another with the given size buffer.
+func copyBytes(ctx context.Context, r, w *os.File, size int) error {
+	buf := make([]byte, size)
+
+	srcReader := NewReadWriterWithContext(ctx, r)
+	dstWriter := NewReadWriterWithContext(ctx, w)
 
 	for {
 		b, err := srcReader.Read(buf)
