@@ -8,6 +8,7 @@ type options struct {
 	force       bool
 	contentOnly bool
 	move        bool
+	revert      bool
 }
 
 func defaultOptions() *options {
@@ -37,3 +38,6 @@ func WithBufferSize(size int) optFunc {
 		o.bufSize = size
 	}
 }
+
+// RevertOnErr removes destination file if there was an error during copy process.
+func RevertOnErr(o *options) { o.revert = true }
