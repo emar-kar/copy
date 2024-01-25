@@ -3,6 +3,7 @@ package copy
 import (
 	"context"
 	"fmt"
+	"hash"
 	"io"
 	"io/fs"
 	"os"
@@ -27,7 +28,7 @@ func Copy(ctx context.Context, src, dst string, opts ...optFunc) error {
 	// If call to rename was finished with an error, it will be ignored
 	// and standart copy algorithm will be used.
 	if opt.move {
-		if err := rename(src, dst); err == nil {
+		if err := rename(src, dst, opt.hash); err == nil {
 			return os.RemoveAll(src)
 		}
 	}
@@ -35,13 +36,25 @@ func Copy(ctx context.Context, src, dst string, opts ...optFunc) error {
 	return copy(ctx, src, dst, opt)
 }
 
-func rename(src, dst string) error {
+func rename(src, dst string, h *hash.Hash) error {
 	info, err := os.Stat(src)
 	if err != nil {
 		return err
 	}
 
 	if !info.IsDir() {
+		if h != nil {
+			f, err := os.Open(src)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+
+			if _, err := io.Copy(*h, f); err != nil {
+				return err
+			}
+		}
+
 		info, err = os.Stat(filepath.Dir(src))
 		if err != nil {
 			return err
@@ -79,9 +92,7 @@ func copy(ctx context.Context, src, dst string, opt *options) error {
 	}
 
 	if _, err := os.Stat(dst); os.IsNotExist(err) || opt.force {
-		if err := copyFile(ctx, src, dst, opt); err != nil {
-			return err
-		}
+		return copyFile(ctx, src, dst, opt)
 	}
 
 	return nil
@@ -149,7 +160,7 @@ func copyFile(ctx context.Context, src, dst string, opt *options) error {
 	}
 	defer dstF.Close()
 
-	if cErr := copyBytes(ctx, srcF, dstF, opt.bufSize); cErr != nil && opt.revert {
+	if cErr := copyBytes(ctx, srcF, dstF, opt.bufSize, opt.hash); cErr != nil && opt.revert {
 		if rErr := os.Remove(dst); rErr != nil {
 			return fmt.Errorf("%w: %s", cErr, rErr)
 		}
@@ -164,10 +175,14 @@ func copyFile(ctx context.Context, src, dst string, opt *options) error {
 	return nil
 }
 
-// copyBytes is a support function to copy bytes from one [os.File]
-// to another with the given size buffer.
-func copyBytes(ctx context.Context, r, w *os.File, size int) error {
+// copyBytes is a support function to copy bytes from [io.Reader] to [io.Writer] with given
+// size buffer and hash.
+func copyBytes(ctx context.Context, r io.Reader, w io.Writer, size int, h *hash.Hash) error {
 	buf := make([]byte, size)
+
+	if h != nil {
+		w = io.MultiWriter(w, *h)
+	}
 
 	srcReader := &readerWithContext{ctx, r}
 	dstWriter := &writerWithContext{ctx, w}

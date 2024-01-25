@@ -1,9 +1,12 @@
 package copy
 
+import "hash"
+
 const defaultBufferSize = 4096
 
 // options allows to configure Copy behavior.
 type options struct {
+	hash        *hash.Hash
 	bufSize     int
 	force       bool
 	contentOnly bool
@@ -41,3 +44,13 @@ func WithBufferSize(size int) optFunc {
 
 // RevertOnErr removes destination file if there was an error during copy process.
 func RevertOnErr(o *options) { o.revert = true }
+
+// WithHash adds bytes copy to given hash.
+//
+// Note: if hash is not nil, it requires to read file(s) for copy. This operation
+// increase total execution time.
+func WithHash(h *hash.Hash) optFunc {
+	return func(o *options) {
+		o.hash = h
+	}
+}
