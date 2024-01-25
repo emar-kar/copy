@@ -36,7 +36,7 @@ func Copy(ctx context.Context, src, dst string, opts ...optFunc) error {
 	return copy(ctx, src, dst, opt)
 }
 
-func rename(src, dst string, h *hash.Hash) error {
+func rename(src, dst string, h hash.Hash) error {
 	info, err := os.Stat(src)
 	if err != nil {
 		return err
@@ -50,7 +50,7 @@ func rename(src, dst string, h *hash.Hash) error {
 			}
 			defer f.Close()
 
-			if _, err := io.Copy(*h, f); err != nil {
+			if _, err := io.Copy(h, f); err != nil {
 				return err
 			}
 		}
@@ -105,7 +105,7 @@ func copy(ctx context.Context, src, dst string, opt *options) error {
 		}
 		defer f.Close()
 
-		if _, err := io.Copy(*opt.hash, f); err != nil {
+		if _, err := io.Copy(opt.hash, f); err != nil {
 			return err
 		}
 	}
@@ -192,11 +192,11 @@ func copyFile(ctx context.Context, src, dst string, opt *options) error {
 
 // copyBytes is a support function to copy bytes from [io.Reader] to [io.Writer] with given
 // size buffer and hash.
-func copyBytes(ctx context.Context, r io.Reader, w io.Writer, size int, h *hash.Hash) error {
+func copyBytes(ctx context.Context, r io.Reader, w io.Writer, size int, h hash.Hash) error {
 	buf := make([]byte, size)
 
 	if h != nil {
-		w = io.MultiWriter(w, *h)
+		w = io.MultiWriter(w, h)
 	}
 
 	srcReader := &readerWithContext{ctx, r}

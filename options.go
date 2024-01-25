@@ -6,7 +6,7 @@ const defaultBufferSize = 4096
 
 // options allows to configure Copy behavior.
 type options struct {
-	hash        *hash.Hash
+	hash        hash.Hash
 	bufSize     int
 	force       bool
 	contentOnly bool
@@ -49,7 +49,7 @@ func RevertOnErr(o *options) { o.revert = true }
 //
 // Note: if hash is not nil, it requires to read file(s) for copy. This operation
 // increase total execution time.
-func WithHash(h *hash.Hash) optFunc {
+func WithHash(h hash.Hash) optFunc {
 	return func(o *options) {
 		o.hash = h
 	}
