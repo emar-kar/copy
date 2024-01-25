@@ -31,6 +31,10 @@ func Copy(ctx context.Context, src, dst string, opts ...optFunc) error {
 		if err := rename(src, dst, opt.hash); err == nil {
 			return os.RemoveAll(src)
 		}
+
+		// Reset hash if rename was unsuccessful, since it will be
+		// recalculated with copy.
+		opt.hash.Reset()
 	}
 
 	return copy(ctx, src, dst, opt)
