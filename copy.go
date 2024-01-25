@@ -169,8 +169,8 @@ func copyFile(ctx context.Context, src, dst string, opt *options) error {
 func copyBytes(ctx context.Context, r, w *os.File, size int) error {
 	buf := make([]byte, size)
 
-	srcReader := NewReadWriterWithContext(ctx, r)
-	dstWriter := NewReadWriterWithContext(ctx, w)
+	srcReader := &readerWithContext{ctx, r}
+	dstWriter := &writerWithContext{ctx, w}
 
 	for {
 		b, err := srcReader.Read(buf)
@@ -204,31 +204,28 @@ func resolvePath(p string) (string, error) {
 	return filepath.Abs(p)
 }
 
-// ReadWriterWithContext wraps [io.ReadWriter] and adds [context.Context]
-// to its Read and Write methods, so those operations can be canceled.
-type ReadWriterWithContext struct {
+type readerWithContext struct {
 	ctx context.Context
-	rw  io.ReadWriter
+	r   io.Reader
 }
 
-func (rw *ReadWriterWithContext) Read(b []byte) (int, error) {
-	if err := rw.ctx.Err(); err != nil {
+func (r *readerWithContext) Read(b []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
 		return 0, err
 	}
 
-	return rw.rw.Read(b)
+	return r.r.Read(b)
 }
 
-func (rw *ReadWriterWithContext) Write(b []byte) (int, error) {
-	if err := rw.ctx.Err(); err != nil {
+type writerWithContext struct {
+	ctx context.Context
+	w   io.Writer
+}
+
+func (w *writerWithContext) Write(b []byte) (int, error) {
+	if err := w.ctx.Err(); err != nil {
 		return 0, err
 	}
 
-	return rw.rw.Write(b)
-}
-
-func NewReadWriterWithContext(
-	ctx context.Context, rw io.ReadWriter,
-) *ReadWriterWithContext {
-	return &ReadWriterWithContext{ctx, rw}
+	return w.w.Write(b)
 }
