@@ -78,18 +78,21 @@ func copy(ctx context.Context, src, dst string, opt *options) error {
 		return copyFolder(ctx, src, dst, opt)
 	}
 
-	if dir, f := path.Split(src); f != path.Base(dst) {
-		info, err := os.Stat(dir)
-		if err != nil {
-			return err
-		}
-
-		if err := os.MkdirAll(dst, info.Mode()); err != nil {
-			return err
-		}
-
-		dst = path.Join(dst, f)
+	dstDir, f := path.Split(dst)
+	if f == "" {
+		f = path.Base(src)
 	}
+
+	info, err := os.Stat(path.Dir(src))
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(dstDir, info.Mode()); err != nil {
+		return err
+	}
+
+	dst = path.Join(dstDir, f)
 
 	if _, err := os.Stat(dst); os.IsNotExist(err) || opt.force {
 		return copyFile(ctx, src, dst, opt)
