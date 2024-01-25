@@ -98,6 +98,18 @@ func copy(ctx context.Context, src, dst string, opt *options) error {
 		return copyFile(ctx, src, dst, opt)
 	}
 
+	if opt.hash != nil {
+		f, err := os.Open(dst)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+
+		if _, err := io.Copy(*opt.hash, f); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
