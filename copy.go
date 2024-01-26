@@ -26,14 +26,14 @@ func Copy(ctx context.Context, src, dst string, opts ...optFunc) error {
 
 	// Attempt to rename file/folder instead of copying and then removing.
 	// If call to rename was finished with an error, it will be ignored
-	// and standart copy algorithm will be used.
+	// and copy algorithm will be used.
 	if opt.move {
 		if err := rename(src, dst, opt.hash); err == nil {
 			return os.RemoveAll(src)
 		}
 
 		// Reset hash if rename was unsuccessful, since it will be
-		// recalculated with copy.
+		// recalculated with copy if needed.
 		opt.hash.Reset()
 	}
 
