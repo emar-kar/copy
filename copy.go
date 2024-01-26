@@ -179,9 +179,11 @@ func copyFile(ctx context.Context, src, dst string, opt *options) error {
 	}
 	defer dstF.Close()
 
-	if cErr := copyBytes(ctx, srcF, dstF, opt.bufSize, opt.hash); cErr != nil && opt.revert {
-		if rErr := os.Remove(dst); rErr != nil {
-			return fmt.Errorf("%w: %s", cErr, rErr)
+	if cErr := copyBytes(ctx, srcF, dstF, opt.bufSize, opt.hash); cErr != nil {
+		if opt.revert {
+			if rErr := os.Remove(dst); rErr != nil {
+				return fmt.Errorf("%w: %s", cErr, rErr)
+			}
 		}
 
 		return cErr
