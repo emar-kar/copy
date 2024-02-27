@@ -102,18 +102,6 @@ func copy(ctx context.Context, src, dst string, opt *options) error {
 		return copyFile(ctx, src, dst, opt)
 	}
 
-	if opt.hash != nil {
-		f, err := os.Open(dst)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-
-		if _, err := io.Copy(opt.hash, f); err != nil {
-			return err
-		}
-	}
-
 	return nil
 }
 
@@ -179,7 +167,15 @@ func copyFile(ctx context.Context, src, dst string, opt *options) error {
 	}
 	defer dstF.Close()
 
-	if cErr := copyBytes(ctx, srcF, dstF, opt.bufSize, opt.hash); cErr != nil {
+	var mw io.Writer
+
+	if opt.hash != nil {
+		mw = io.MultiWriter(dstF, opt.hash)
+	} else {
+		mw = dstF
+	}
+
+	if cErr := copyBytes(ctx, srcF, mw, opt.bufSize, opt.hash); cErr != nil {
 		if opt.revert {
 			if rErr := os.Remove(dst); rErr != nil {
 				return fmt.Errorf("%w: %s", cErr, rErr)

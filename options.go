@@ -45,7 +45,7 @@ func WithBufferSize(size int) optFunc {
 // RevertOnErr removes destination file if there was an error during copy process.
 func RevertOnErr(o *options) { o.revert = true }
 
-// WithHash calculates hash of the copied file.
+// WithHash calculates hash of the copied file(s).
 //
 // Note: if hash is not nil, it guarantee the copied file(s) will be read.
 // Might increase total execution time.
