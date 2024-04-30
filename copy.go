@@ -3,6 +3,7 @@ package copy
 import (
 	"context"
 	"fmt"
+	"hash"
 	"io"
 	"io/fs"
 	"os"
@@ -25,23 +26,39 @@ func Copy(ctx context.Context, src, dst string, opts ...optFunc) error {
 
 	// Attempt to rename file/folder instead of copying and then removing.
 	// If call to rename was finished with an error, it will be ignored
-	// and standart copy algorithm will be used.
+	// and copy algorithm will be used.
 	if opt.move {
-		if err := rename(src, dst); err == nil {
+		if err := rename(src, dst, opt.hash); err == nil {
 			return os.RemoveAll(src)
 		}
+
+		// Reset hash if rename was unsuccessful, since it will be
+		// recalculated with copy if needed.
+		opt.hash.Reset()
 	}
 
 	return copy(ctx, src, dst, opt)
 }
 
-func rename(src, dst string) error {
+func rename(src, dst string, h hash.Hash) error {
 	info, err := os.Stat(src)
 	if err != nil {
 		return err
 	}
 
 	if !info.IsDir() {
+		if h != nil {
+			f, err := os.Open(src)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+
+			if _, err := io.Copy(h, f); err != nil {
+				return err
+			}
+		}
+
 		info, err = os.Stat(filepath.Dir(src))
 		if err != nil {
 			return err
@@ -65,23 +82,24 @@ func copy(ctx context.Context, src, dst string, opt *options) error {
 		return copyFolder(ctx, src, dst, opt)
 	}
 
-	if dir, f := path.Split(src); f != path.Base(dst) {
-		info, err := os.Stat(dir)
-		if err != nil {
-			return err
-		}
-
-		if err := os.MkdirAll(dst, info.Mode()); err != nil {
-			return err
-		}
-
-		dst = path.Join(dst, f)
+	dstDir, f := path.Split(dst)
+	if f == "" {
+		f = path.Base(src)
 	}
 
+	info, err := os.Stat(path.Dir(src))
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(dstDir, info.Mode()); err != nil {
+		return err
+	}
+
+	dst = path.Join(dstDir, f)
+
 	if _, err := os.Stat(dst); os.IsNotExist(err) || opt.force {
-		if err := copyFile(ctx, src, dst, opt); err != nil {
-			return err
-		}
+		return copyFile(ctx, src, dst, opt)
 	}
 
 	return nil
@@ -149,9 +167,19 @@ func copyFile(ctx context.Context, src, dst string, opt *options) error {
 	}
 	defer dstF.Close()
 
-	if cErr := copyBytes(ctx, srcF, dstF, opt.bufSize); cErr != nil && opt.revert {
-		if rErr := os.Remove(dst); rErr != nil {
-			return fmt.Errorf("%w: %s", cErr, rErr)
+	var mw io.Writer
+
+	if opt.hash != nil {
+		mw = io.MultiWriter(dstF, opt.hash)
+	} else {
+		mw = dstF
+	}
+
+	if cErr := copyBytes(ctx, srcF, mw, opt.bufSize, opt.hash); cErr != nil {
+		if opt.revert {
+			if rErr := os.Remove(dst); rErr != nil {
+				return fmt.Errorf("%w: %s", cErr, rErr)
+			}
 		}
 
 		return cErr
@@ -164,13 +192,17 @@ func copyFile(ctx context.Context, src, dst string, opt *options) error {
 	return nil
 }
 
-// copyBytes is a support function to copy bytes from one [os.File]
-// to another with the given size buffer.
-func copyBytes(ctx context.Context, r, w *os.File, size int) error {
+// copyBytes is a support function to copy bytes from [io.Reader] to [io.Writer] with given
+// size buffer and hash.
+func copyBytes(ctx context.Context, r io.Reader, w io.Writer, size int, h hash.Hash) error {
 	buf := make([]byte, size)
 
-	srcReader := NewReadWriterWithContext(ctx, r)
-	dstWriter := NewReadWriterWithContext(ctx, w)
+	if h != nil {
+		w = io.MultiWriter(w, h)
+	}
+
+	srcReader := &readerWithContext{ctx, r}
+	dstWriter := &writerWithContext{ctx, w}
 
 	for {
 		b, err := srcReader.Read(buf)
@@ -204,31 +236,28 @@ func resolvePath(p string) (string, error) {
 	return filepath.Abs(p)
 }
 
-// ReadWriterWithContext wraps [io.ReadWriter] and adds [context.Context]
-// to its Read and Write methods, so those operations can be canceled.
-type ReadWriterWithContext struct {
+type readerWithContext struct {
 	ctx context.Context
-	rw  io.ReadWriter
+	r   io.Reader
 }
 
-func (rw *ReadWriterWithContext) Read(b []byte) (int, error) {
-	if err := rw.ctx.Err(); err != nil {
+func (r *readerWithContext) Read(b []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
 		return 0, err
 	}
 
-	return rw.rw.Read(b)
+	return r.r.Read(b)
 }
 
-func (rw *ReadWriterWithContext) Write(b []byte) (int, error) {
-	if err := rw.ctx.Err(); err != nil {
+type writerWithContext struct {
+	ctx context.Context
+	w   io.Writer
+}
+
+func (w *writerWithContext) Write(b []byte) (int, error) {
+	if err := w.ctx.Err(); err != nil {
 		return 0, err
 	}
 
-	return rw.rw.Write(b)
-}
-
-func NewReadWriterWithContext(
-	ctx context.Context, rw io.ReadWriter,
-) *ReadWriterWithContext {
-	return &ReadWriterWithContext{ctx, rw}
+	return w.w.Write(b)
 }
