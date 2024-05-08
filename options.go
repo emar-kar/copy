@@ -18,7 +18,12 @@ func defaultOptions() *options {
 	return &options{bufSize: defaultBufferSize}
 }
 
-type optFunc func(*options)
+type (
+	optFunc func(*options)
+
+	// Type to create custom slices of copy options.
+	Options []optFunc
+)
 
 // Force re-writes destination if it is already exists.
 func Force(o *options) { o.force = true }
