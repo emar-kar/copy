@@ -2,6 +2,7 @@ package copy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
@@ -212,7 +213,7 @@ func copyBytes(ctx context.Context, r io.Reader, w io.Writer, size int, h hash.H
 
 	for {
 		b, err := srcReader.Read(buf)
-		if err != nil && err != io.EOF {
+		if err != nil && !errors.Is(err, io.EOF) {
 			return err
 		}
 
