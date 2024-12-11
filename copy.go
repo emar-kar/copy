@@ -2,6 +2,7 @@ package copy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
@@ -9,32 +10,42 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
 // Copy copies source file/folder to destination with given options.
-func Copy(ctx context.Context, src, dst string, opts ...optFunc) error {
+func Copy(ctx context.Context, src, dst string, opts ...optFunc) (err error) {
 	opt := defaultOptions()
 	for _, fn := range opts {
 		fn(opt)
 	}
 
-	src, err := resolvePath(src)
-	if err != nil {
-		return err
+	if opt.follow {
+		src, err = resolvePath(src)
+		if err != nil {
+			return err
+		}
+	}
+
+	if excludePath(opt.exclude, src) {
+		return nil
 	}
 
 	// Attempt to rename file/folder instead of copying and then removing.
 	// If call to rename was finished with an error, it will be ignored
-	// and copy algorithm will be used.
+	// and copy algorithm will be used. In case of renaming a folder,
+	// hash is not calculated and will be empty.
 	if opt.move {
 		if err := rename(src, dst, opt.hash); err == nil {
 			return os.RemoveAll(src)
 		}
 
-		// Reset hash if rename was unsuccessful, since it will be
-		// recalculated with copy if needed.
-		opt.hash.Reset()
+		if opt.hash != nil {
+			// Reset hash if rename was unsuccessful, since it will be
+			// recalculated with copy if needed.
+			opt.hash.Reset()
+		}
 	}
 
 	return copy(ctx, src, dst, opt)
@@ -116,6 +127,10 @@ func copyFolder(ctx context.Context, src, dst string, opt *options) error {
 		) error {
 			if err != nil {
 				return err
+			}
+
+			if excludePath(opt.exclude, root) {
+				return nil
 			}
 
 			subDst := strings.ReplaceAll(root, src, dst)
@@ -206,7 +221,7 @@ func copyBytes(ctx context.Context, r io.Reader, w io.Writer, size int, h hash.H
 
 	for {
 		b, err := srcReader.Read(buf)
-		if err != nil && err != io.EOF {
+		if err != nil && !errors.Is(err, io.EOF) {
 			return err
 		}
 
@@ -260,4 +275,16 @@ func (w *writerWithContext) Write(b []byte) (int, error) {
 	}
 
 	return w.w.Write(b)
+}
+
+// excludePath checks if given path should be excluded.
+func excludePath(exclude []string, p string) bool {
+	if exclude != nil {
+		return false
+	}
+
+	return slices.ContainsFunc(
+		exclude,
+		func(s string) bool { return strings.Contains(p, s) },
+	)
 }

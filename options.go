@@ -6,12 +6,14 @@ const defaultBufferSize = 4096
 
 // options allows to configure Copy behavior.
 type options struct {
+	exclude     []string
 	hash        hash.Hash
 	bufSize     int
 	force       bool
 	contentOnly bool
 	move        bool
 	revert      bool
+	follow      bool
 }
 
 func defaultOptions() *options {
@@ -31,6 +33,10 @@ func Force(o *options) { o.force = true }
 // ContentOnly copies only source folder content without creating
 // root folder in destination.
 func ContentOnly(o *options) { o.contentOnly = true }
+
+// FollowSymlink resolves source file path before copy, to follow symlink
+// if needed.
+func FollowSymlink(o *options) { o.follow = true }
 
 // WithMove removes source after copying process is finished.
 func WithMove(o *options) { o.move = true }
@@ -57,5 +63,13 @@ func RevertOnErr(o *options) { o.revert = true }
 func WithHash(h hash.Hash) optFunc {
 	return func(o *options) {
 		o.hash = h
+	}
+}
+
+// WithExclude excludes paths from copy which includes one of the given
+// strings.
+func WithExclude(s ...string) optFunc {
+	return func(o *options) {
+		o.exclude = append(o.exclude, s...)
 	}
 }
