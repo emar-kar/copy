@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -26,6 +27,9 @@ func Copy(ctx context.Context, src, dst string, opts ...optFunc) (err error) {
 			return err
 		}
 	}
+
+	if excludePath(opt.exclude, src) {
+		return nil
 	}
 
 	// Attempt to rename file/folder instead of copying and then removing.
@@ -123,6 +127,10 @@ func copyFolder(ctx context.Context, src, dst string, opt *options) error {
 		) error {
 			if err != nil {
 				return err
+			}
+
+			if excludePath(opt.exclude, root) {
+				return nil
 			}
 
 			subDst := strings.ReplaceAll(root, src, dst)
@@ -267,4 +275,16 @@ func (w *writerWithContext) Write(b []byte) (int, error) {
 	}
 
 	return w.w.Write(b)
+}
+
+// excludePath checks if given path should be excluded.
+func excludePath(exclude []string, p string) bool {
+	if exclude != nil {
+		return false
+	}
+
+	return slices.ContainsFunc(
+		exclude,
+		func(s string) bool { return strings.Contains(p, s) },
+	)
 }

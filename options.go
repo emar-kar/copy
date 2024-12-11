@@ -6,6 +6,7 @@ const defaultBufferSize = 4096
 
 // options allows to configure Copy behavior.
 type options struct {
+	exclude     []string
 	hash        hash.Hash
 	bufSize     int
 	force       bool
@@ -62,5 +63,13 @@ func RevertOnErr(o *options) { o.revert = true }
 func WithHash(h hash.Hash) optFunc {
 	return func(o *options) {
 		o.hash = h
+	}
+}
+
+// WithExclude excludes paths from copy which includes one of the given
+// strings.
+func WithExclude(s ...string) optFunc {
+	return func(o *options) {
+		o.exclude = append(o.exclude, s...)
 	}
 }
