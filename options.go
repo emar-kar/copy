@@ -12,6 +12,7 @@ type options struct {
 	contentOnly bool
 	move        bool
 	revert      bool
+	follow      bool
 }
 
 func defaultOptions() *options {
@@ -31,6 +32,10 @@ func Force(o *options) { o.force = true }
 // ContentOnly copies only source folder content without creating
 // root folder in destination.
 func ContentOnly(o *options) { o.contentOnly = true }
+
+// FollowSymlink resolves source file path before copy, to follow symlink
+// if needed.
+func FollowSymlink(o *options) { o.follow = true }
 
 // WithMove removes source after copying process is finished.
 func WithMove(o *options) { o.move = true }

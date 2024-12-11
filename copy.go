@@ -13,15 +13,18 @@ import (
 )
 
 // Copy copies source file/folder to destination with given options.
-func Copy(ctx context.Context, src, dst string, opts ...optFunc) error {
+func Copy(ctx context.Context, src, dst string, opts ...optFunc) (err error) {
 	opt := defaultOptions()
 	for _, fn := range opts {
 		fn(opt)
 	}
 
-	src, err := resolvePath(src)
-	if err != nil {
-		return err
+	if opt.follow {
+		src, err = resolvePath(src)
+		if err != nil {
+			return err
+		}
+	}
 	}
 
 	// Attempt to rename file/folder instead of copying and then removing.
