@@ -28,6 +28,7 @@ func Copy(ctx context.Context, src, dst string, opts ...optFunc) (err error) {
 		}
 	}
 
+	// Just in case.
 	if excludePath(opt.exclude, src) {
 		return nil
 	}
@@ -279,7 +280,7 @@ func (w *writerWithContext) Write(b []byte) (int, error) {
 
 // excludePath checks if given path should be excluded.
 func excludePath(exclude []string, p string) bool {
-	if exclude != nil {
+	if exclude == nil {
 		return false
 	}
 
