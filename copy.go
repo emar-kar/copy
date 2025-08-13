@@ -4,174 +4,131 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"hash"
 	"io"
 	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
-	"slices"
 	"strings"
+
+	"github.com/emar-kar/copy/v2/internal/contextio"
+	"github.com/emar-kar/copy/v2/internal/utils"
 )
 
-// Copy copies source file/folder to destination with given options.
-func Copy(ctx context.Context, src, dst string, opts ...optFunc) (err error) {
+var ErrSame = errors.New("same location")
+
+func Copy(ctx context.Context, src, dst string, opts ...optFunc) error {
 	opt := defaultOptions()
 	for _, fn := range opts {
 		fn(opt)
 	}
 
-	if opt.follow {
-		src, err = resolvePath(src)
-		if err != nil {
-			return err
-		}
-	}
+	var (
+		link bool
+		err  error
+	)
 
-	// Just in case.
-	if excludePath(opt.exclude, src) {
-		return nil
-	}
-
-	// Attempt to rename file/folder instead of copying and then removing.
-	// If call to rename was finished with an error, it will be ignored
-	// and copy algorithm will be used. In case of renaming a folder,
-	// hash is not calculated and will be empty.
-	if opt.move {
-		if err := rename(src, dst, opt.hash); err == nil {
-			return os.RemoveAll(src)
-		}
-
-		if opt.hash != nil {
-			// Reset hash if rename was unsuccessful, since it will be
-			// recalculated with copy if needed.
-			opt.hash.Reset()
-		}
-	}
-
-	return copy(ctx, src, dst, opt)
-}
-
-func rename(src, dst string, h hash.Hash) error {
-	info, err := os.Stat(src)
+	src, link, err = utils.ResolvePath(src)
 	if err != nil {
 		return err
 	}
 
-	if !info.IsDir() {
-		if h != nil {
-			f, err := os.Open(src)
-			if err != nil {
-				return err
-			}
-			defer f.Close()
-
-			if _, err := io.Copy(h, f); err != nil {
-				return err
-			}
-		}
-
-		info, err = os.Stat(filepath.Dir(src))
-		if err != nil {
-			return err
-		}
+	if opt.excludeFunc(src) {
+		return nil
 	}
 
-	if err := os.MkdirAll(filepath.Dir(dst), info.Mode()); err != nil {
-		return err
-	}
-
-	return os.Rename(src, dst)
-}
-
-func copy(ctx context.Context, src, dst string, opt *options) error {
 	srcInfo, err := os.Stat(src)
 	if err != nil {
 		return err
 	}
 
+	if dstInfo, err := os.Stat(dst); !errors.Is(err, fs.ErrNotExist) {
+		if os.SameFile(srcInfo, dstInfo) {
+			return ErrSame
+		}
+
+		if !opt.force {
+			return fmt.Errorf("%s: %w", dst, fs.ErrExist)
+		}
+
+		if err := os.RemoveAll(dst); err != nil {
+			return err
+		}
+	}
+
+	dstDir, fileName := path.Split(dst)
+
+	if err := os.MkdirAll(dstDir, srcInfo.Mode()); err != nil {
+		return err
+	}
+
+	if fileName == "" {
+		dst = path.Join(dstDir, path.Base(src))
+	}
+
+	if link && opt.noFollow {
+		return os.Symlink(src, dst)
+	}
+
 	if srcInfo.IsDir() {
-		return copyFolder(ctx, src, dst, opt)
+		return copyTree(ctx, src, dst, opt)
 	}
 
-	dstDir, f := path.Split(dst)
-	if f == "" {
-		f = path.Base(src)
-	}
-
-	info, err := os.Stat(path.Dir(src))
-	if err != nil {
-		return err
-	}
-
-	if err := os.MkdirAll(dstDir, info.Mode()); err != nil {
-		return err
-	}
-
-	dst = path.Join(dstDir, f)
-
-	if _, err := os.Stat(dst); os.IsNotExist(err) || opt.force {
-		return copyFile(ctx, src, dst, opt)
-	}
-
-	return nil
+	return copyFile(ctx, src, dst, opt)
 }
 
-// copyFolder is a support function to copy folder and its' content.
-func copyFolder(ctx context.Context, src, dst string, opt *options) error {
-	if !opt.contentOnly {
-		dst = path.Join(dst, path.Base(src))
-	}
-
-	if err := filepath.Walk(
-		src, func(root string, info fs.FileInfo, err error,
-		) error {
+func copyTree(ctx context.Context, src, dst string, opt *options) error {
+	return filepath.Walk(
+		src, func(root string, info fs.FileInfo, err error) error {
 			if err != nil {
 				return err
 			}
 
-			if excludePath(opt.exclude, root) {
+			res, link, err := utils.ResolvePath(root)
+			if err != nil {
+				return err
+			}
+
+			if opt.excludeFunc(res) {
 				return nil
 			}
 
-			subDst := strings.ReplaceAll(root, src, dst)
-			if info.IsDir() {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				default:
-					return os.MkdirAll(subDst, info.Mode())
-				}
-			} else {
-				if _, err := os.Stat(subDst); os.IsNotExist(err) || opt.force {
-					return copyFile(ctx, root, subDst, opt)
+			if link {
+				info, err = os.Stat(res)
+				if err != nil {
+					return err
 				}
 			}
 
-			return nil
-		}); err != nil {
+			subDst := strings.ReplaceAll(root, src, dst)
+
+			switch {
+			case link && opt.noFollow:
+				return os.Symlink(res, subDst)
+			case info.IsDir():
+				return os.MkdirAll(subDst, info.Mode())
+			default:
+				if err := os.MkdirAll(path.Dir(subDst), info.Mode()); err != nil {
+					return err
+				}
+
+				return copyFile(ctx, root, subDst, opt)
+			}
+		},
+	)
+}
+
+func copyFile(ctx context.Context, src, dst string, opt *options) (err error) {
+	stat, err := os.Stat(src)
+	if err != nil {
 		return err
 	}
 
-	if opt.move {
-		return os.RemoveAll(src)
-	}
-
-	return nil
-}
-
-// copyFile is a support function to copy file content.
-func copyFile(ctx context.Context, src, dst string, opt *options) error {
 	srcF, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer srcF.Close()
-
-	stat, err := os.Stat(src)
-	if err != nil {
-		return err
-	}
 
 	dstF, err := os.OpenFile(
 		dst,
@@ -183,45 +140,16 @@ func copyFile(ctx context.Context, src, dst string, opt *options) error {
 	}
 	defer dstF.Close()
 
-	var mw io.Writer
-
-	if opt.hash != nil {
-		mw = io.MultiWriter(dstF, opt.hash)
-	} else {
-		mw = dstF
-	}
-
-	if cErr := copyBytes(ctx, srcF, mw, opt.bufSize, opt.hash); cErr != nil {
-		if opt.revert {
-			if rErr := os.Remove(dst); rErr != nil {
-				return fmt.Errorf("%w: %s", cErr, rErr)
-			}
-		}
-
-		return cErr
-	}
-
-	if opt.move {
-		return os.Remove(src)
-	}
-
-	return nil
+	return copyBytes(ctx, srcF, dstF, opt.bufSize)
 }
 
-// copyBytes is a support function to copy bytes from [io.Reader] to [io.Writer] with given
-// size buffer and hash.
-func copyBytes(ctx context.Context, r io.Reader, w io.Writer, size int, h hash.Hash) error {
+func copyBytes(ctx context.Context, r io.Reader, w io.Writer, size int) error {
+	src := contextio.Reader(ctx, r)
+	dst := contextio.Writer(ctx, w)
 	buf := make([]byte, size)
 
-	if h != nil {
-		w = io.MultiWriter(w, h)
-	}
-
-	srcReader := &readerWithContext{ctx, r}
-	dstWriter := &writerWithContext{ctx, w}
-
 	for {
-		b, err := srcReader.Read(buf)
+		b, err := src.Read(buf)
 		if err != nil && !errors.Is(err, io.EOF) {
 			return err
 		}
@@ -230,62 +158,8 @@ func copyBytes(ctx context.Context, r io.Reader, w io.Writer, size int, h hash.H
 			return nil
 		}
 
-		if _, err := dstWriter.Write(buf[:b]); err != nil {
+		if _, err := dst.Write(buf[:b]); err != nil {
 			return err
 		}
 	}
-}
-
-// resolvePath resolves symlinks and relative paths.
-func resolvePath(p string) (string, error) {
-	info, err := os.Lstat(p)
-	if err != nil {
-		return "", err
-	}
-
-	if info.Mode()&os.ModeSymlink == os.ModeSymlink {
-		if p, err = filepath.EvalSymlinks(p); err != nil {
-			return "", err
-		}
-	}
-
-	return filepath.Abs(p)
-}
-
-type readerWithContext struct {
-	ctx context.Context
-	r   io.Reader
-}
-
-func (r *readerWithContext) Read(b []byte) (int, error) {
-	if err := r.ctx.Err(); err != nil {
-		return 0, err
-	}
-
-	return r.r.Read(b)
-}
-
-type writerWithContext struct {
-	ctx context.Context
-	w   io.Writer
-}
-
-func (w *writerWithContext) Write(b []byte) (int, error) {
-	if err := w.ctx.Err(); err != nil {
-		return 0, err
-	}
-
-	return w.w.Write(b)
-}
-
-// excludePath checks if given path should be excluded.
-func excludePath(exclude []string, p string) bool {
-	if exclude == nil {
-		return false
-	}
-
-	return slices.ContainsFunc(
-		exclude,
-		func(s string) bool { return strings.Contains(p, s) },
-	)
 }
