@@ -3,7 +3,9 @@ package copy
 const defaultBufSize = 64 * 1024
 
 type (
-	optFunc     func(*options)
+	// Option configures the behaviour of [Copy].
+	Option func(*options)
+
 	excludeFunc func(string) bool
 
 	options struct {
@@ -11,6 +13,7 @@ type (
 		bufSize     int
 		force       bool
 		noFollow    bool
+		into        bool
 	}
 )
 
@@ -21,27 +24,42 @@ func defaultOptions() *options {
 	}
 }
 
-// WithBufferSize allows to set custom buffer size for file copy.
-// If provided size is <= 0, then default will be used.
-func WithBufferSize(i int) optFunc {
+// WithBufferSize sets the size of the in-memory buffer used when copying file
+// contents. If size is <= 0 the default (64 KiB) is used.
+func WithBufferSize(size int) Option {
 	return func(o *options) {
-		if i <= 0 {
+		if size <= 0 {
 			return
 		}
 
-		o.bufSize = i
+		o.bufSize = size
 	}
 }
 
-// WithExcludeFunc allows to filter files and folders by path.
-func WithExcludeFunc(fn excludeFunc) optFunc {
+// WithExcludeFunc sets a predicate that controls which paths are copied.
+// The function receives the absolute path of each entry; returning true skips
+// that entry (and, for directories, their entire subtree).
+func WithExcludeFunc(fn excludeFunc) Option {
 	return func(o *options) {
 		o.excludeFunc = fn
 	}
 }
 
-// Force rewrites destination if it already exists.
-func Force(o *options) { o.force = true }
+// WithForce removes the destination before copying when it already exists,
+// preventing an [fs.ErrExist] error.
+func WithForce(o *options) { o.force = true }
 
-// WithNoFollow creates symlinks instead of resolving path and copying the contents.
+// Deprecated: Use [WithForce] instead.
+func Force(o *options) { WithForce(o) }
+
+// WithNoFollow recreates symlinks encountered during a copy instead of
+// following them to their targets. Broken symlinks are preserved as-is.
 func WithNoFollow(o *options) { o.noFollow = true }
+
+// Into copies src inside dst rather than directly to dst. The source's base
+// name is appended to dst automatically. This is equivalent to adding a
+// trailing path separator to dst but is more explicit and less error-prone.
+//
+//	copy.Copy(ctx, "src/dir", "dst/target", copy.Into)
+//	// result: dst/target/dir/{files...}
+func Into(o *options) { o.into = true }
